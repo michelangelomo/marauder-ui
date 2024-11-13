@@ -5,6 +5,7 @@ const port = ref(null)
 const reader = ref(null)
 const isConnected = ref(false)
 const terminalOutput = ref([])
+const isDemoMode = ref(false)
 let buffer = ''
 
 export const useSerialConnection = () => {
@@ -19,11 +20,11 @@ export const useSerialConnection = () => {
       console.log('Requesting port...')
       port.value = await navigator.serial.requestPort()
       console.log('Port selected:', port.value)
-      
+
       console.log('Opening port...')
       await port.value.open({ baudRate: 115200 })
       console.log('Port opened successfully')
-      
+
       isConnected.value = true
       addToTerminal('✓ Connected to serial port', 'success')
       startReading()
@@ -64,13 +65,13 @@ export const useSerialConnection = () => {
           while (true) {
             const { value, done } = await reader.value.read()
             if (done) break
-            
+
             if (value) {
               // Accumulate the buffer and process complete lines
               buffer += value
               const lines = buffer.split('\n')
               buffer = lines.pop() // Keep the last incomplete line in buffer
-              
+
               // Process complete lines
               lines.forEach(line => {
                 if (line.trim()) {
@@ -94,6 +95,35 @@ export const useSerialConnection = () => {
   }
 
   const sendCommand = async (command) => {
+    console.log(isDemoMode.value)
+    if (isDemoMode.value) {
+      // Handle demo commands
+      addToTerminal(`> ${command}`, 'command')
+
+      // Simulate responses based on command
+      switch (command) {
+        case 'scanap':
+          addToTerminal('Starting AP scan. Stop with stopscan')
+          setTimeout(() => {
+            generateDemoData().forEach(ap => {
+              addToTerminal(`RSSI: ${ap.rssi} Ch: ${ap.channel} BSSID: ${ap.bssid} ESSID: ${ap.essid}`)
+            })
+          }, 500)
+          break
+        case 'list -a':
+          generateDemoData().forEach(ap => {
+            addToTerminal(`[${ap.index}][CH:${ap.channel}] ${ap.essid}${ap.isSelected ? ' (selected)' : ''}`)
+          })
+          break
+        case 'stopscan':
+          addToTerminal('Stopping all scans...')
+          break
+        default:
+          addToTerminal(`Executing: ${command}`)
+      }
+      return
+    }
+
     if (!command || !port.value) {
       addToTerminal('✗ No command or not connected', 'error')
       return
@@ -117,7 +147,7 @@ export const useSerialConnection = () => {
     if (text.trim()) {
       const lineClass = getTypeClass(type)
       terminalOutput.value = [...terminalOutput.value, `<span class="${lineClass}">${text}</span>`]
-      
+
       // Keep only last 1000 lines
       if (terminalOutput.value.length > 1000) {
         terminalOutput.value = terminalOutput.value.slice(-1000)
@@ -137,6 +167,7 @@ export const useSerialConnection = () => {
 
   return {
     isConnected: computed(() => isConnected.value), // Make it computed
+    isDemoMode,
     terminalOutput,
     connect,
     disconnect,

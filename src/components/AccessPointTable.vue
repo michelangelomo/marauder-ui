@@ -65,6 +65,9 @@
               <td class="px-2 py-1">
                 <div class="flex items-center">
                   <span class="font-medium">{{ ap.essid }}</span>
+                  <span v-if="ap.isSelected" class="ml-1 text-xs bg-green-100 px-1 rounded">
+                    selected
+                  </span>
                   <span v-if="ap.isHidden" class="ml-1 text-xs bg-gray-200 px-1 rounded">
                     hidden
                   </span>
@@ -120,6 +123,9 @@
               <td class="px-2 py-1">
                 <div class="flex items-center">
                   <span class="font-medium">{{ ap.essid }}</span>
+                  <span v-if="ap.isSelected" class="ml-1 text-xs bg-green-100 px-1 rounded">
+                    selected
+                  </span>
                   <span v-if="ap.isHidden" class="ml-1 text-xs bg-gray-200 px-1 rounded">
                     hidden
                   </span>
@@ -176,7 +182,27 @@ const viewOptions = [
 ]
 
 const sortedAPs = computed(() => {
-  let aps = Array.from(accessPoints.value.values())
+  // Convert Map to array and ensure unique entries
+  let aps = Array.from(accessPoints.value.values()).reduce((unique, ap) => {
+    // Use channel-essid as unique identifier
+    const key = `${ap.channel}-${ap.essid}`
+    if (!unique.has(key)) {
+      unique.set(key, ap)
+    } else {
+      // If AP already exists, merge properties preferring the newer data
+      const existing = unique.get(key)
+      unique.set(key, {
+        ...existing,
+        ...ap,
+        stations: [...(ap.stations || [])],
+        lastSeen: ap.lastSeen > existing.lastSeen ? ap.lastSeen : existing.lastSeen
+      })
+    }
+    return unique
+  }, new Map())
+
+  // Convert back to array
+  aps = Array.from(aps.values())
 
   // Apply search filter
   if (search.value) {
@@ -192,13 +218,18 @@ const sortedAPs = computed(() => {
   return aps.sort((a, b) => {
     switch (sortBy.value) {
       case 'rssi':
-        return (b.rssi || -999) - (a.rssi || -999)
+        // Handle cases where RSSI might be undefined
+        const rssiA = a.rssi ?? -999
+        const rssiB = b.rssi ?? -999
+        return rssiB - rssiA || a.essid.localeCompare(b.essid)
       case 'stations':
-        return (b.stations?.length || 0) - (a.stations?.length || 0)
+        const stationsA = a.stations?.length || 0
+        const stationsB = b.stations?.length || 0
+        return stationsB - stationsA || a.essid.localeCompare(b.essid)
       case 'essid':
         return a.essid.localeCompare(b.essid)
       case 'channel':
-        return a.channel - b.channel
+        return (a.channel - b.channel) || a.essid.localeCompare(b.essid)
       default:
         return 0
     }
@@ -269,36 +300,49 @@ const updateAccessPoint = (ap) => {
   newAccessPoints.set(key, {
     ...existing,
     ...ap,
-    stations: [...(ap.stations || [])].sort((a, b) => a.id - b.id), // Sort stations by ID
-    lastSeen: new Date()
+    stations: [...(ap.stations || [])].sort((a, b) => a.id - b.id),
+    lastSeen: new Date(),
+    // Ensure these properties are always present
+    rssi: ap.rssi ?? existing?.rssi,
+    bssid: ap.bssid || existing?.bssid || 'Unknown',
+    isSelected: ap.isSelected ?? existing?.isSelected ?? false,
+    isHidden: ap.isHidden ?? existing?.isHidden ?? false
   })
 
   accessPoints.value = newAccessPoints
 }
 
-// Update the parsing in the watch function
+const cleanEssid = (essid) => {
+  // Remove special characters and clean up the string
+  return essid
+    .replace(/[�]/g, '') // Remove the weird symbol
+    .replace(/\s*\(selected\)\s*$/, '') // Remove (selected) from the end
+    .trim()
+}
+
 watch(() => terminalOutput.value, (newLines) => {
   newLines.forEach(line => {
     const plainLine = line.replace(/<[^>]+>/g, '')
 
     // Parse list -a output first (to get indices)
     if (plainLine.match(/^\[\d+\]\[CH:/)) {
-      const match = plainLine.match(/\[(\d+)\]\[CH:(\d+)\]\s(.+?)\s?[�]?$/)
+      const match = plainLine.match(/\[(\d+)\]\[CH:(\d+)\]\s(.+?)(?:\s*[�]?\s*(?:\(selected\))?\s*)?$/)
       if (match) {
         const [_, index, channel, essid] = match
-        const trimmedEssid = essid.trim()
+        const trimmedEssid = cleanEssid(essid)
 
         // Create a key that matches the one used in scanap
         const key = `${channel}-${trimmedEssid}`
         const existingAP = accessPoints.value.get(key)
 
         if (existingAP) {
-          // Update existing AP with new index
+          // Update existing AP with new index and selected status
           updateAccessPoint({
             ...existingAP,
             index: parseInt(index),
             channel: parseInt(channel),
             essid: trimmedEssid,
+            isSelected: plainLine.includes('(selected)'),
             lastSeen: new Date()
           })
         } else {
@@ -309,6 +353,7 @@ watch(() => terminalOutput.value, (newLines) => {
             essid: trimmedEssid,
             bssid: 'Unknown',
             isHidden: false,
+            isSelected: plainLine.includes('(selected)'),
             lastSeen: new Date(),
             stations: []
           })
@@ -316,60 +361,28 @@ watch(() => terminalOutput.value, (newLines) => {
       }
     }
 
-    // Parse both scanap and beacon sniff output (they use the same format)
-    else if (plainLine.match(/RSSI:\s-?\d+/)) {
+    // Parse scanap output
+    else if (plainLine.includes('RSSI:')) {
       const match = plainLine.match(/RSSI:\s(-?\d+)\sCh:\s(\d+)\sBSSID:\s([a-fA-F0-9:]+)\sESSID:\s(.+)/)
       if (match) {
         const [_, rssi, channel, bssid, essid] = match
-        const trimmedEssid = essid.trim()
-        
-        // Use BSSID as the primary key for the Map
-        const existingAP = accessPoints.value.get(bssid)
-        const parsedRssi = parseInt(rssi)
-        const parsedChannel = parseInt(channel)
+        const trimmedEssid = cleanEssid(essid)
+        const key = `${channel}-${trimmedEssid}`
 
-        if (existingAP) {
-          // Update existing AP
-          // Only update channel if it's significantly different
-          const newChannel = Math.abs(existingAP.channel - parsedChannel) > 2 ? 
-            parsedChannel : existingAP.channel
+        // Try to find existing AP to preserve index and other data
+        const existingAP = accessPoints.value.get(key)
 
-          // Use exponential moving average for RSSI
-          const newRssi = existingAP.rssi ? 
-            Math.round(existingAP.rssi * 0.7 + parsedRssi * 0.3) : 
-            parsedRssi
-
-          // Create a new Map to ensure reactivity
-          const newAccessPoints = new Map(accessPoints.value)
-          newAccessPoints.set(bssid, {
-            ...existingAP,
-            rssi: newRssi,
-            channel: newChannel,
-            essid: trimmedEssid,
-            bssid,
-            isHidden: trimmedEssid === bssid,
-            lastSeen: new Date(),
-            beaconCount: (existingAP.beaconCount || 0) + 1,
-            stations: existingAP.stations || []
-          })
-          
-          accessPoints.value = newAccessPoints
-        } else {
-          // Create new AP entry
-          const newAccessPoints = new Map(accessPoints.value)
-          newAccessPoints.set(bssid, {
-            rssi: parsedRssi,
-            channel: parsedChannel,
-            bssid,
-            essid: trimmedEssid,
-            isHidden: trimmedEssid === bssid,
-            lastSeen: new Date(),
-            stations: [],
-            beaconCount: 1
-          })
-          
-          accessPoints.value = newAccessPoints
-        }
+        updateAccessPoint({
+          ...(existingAP || {}), // Preserve existing data, especially index and selected status
+          rssi: parseInt(rssi),
+          channel: parseInt(channel),
+          bssid,
+          essid: trimmedEssid,
+          isHidden: trimmedEssid === bssid,
+          isSelected: existingAP?.isSelected || false,
+          lastSeen: new Date(),
+          stations: existingAP?.stations || []
+        })
       }
     }
 
@@ -383,25 +396,42 @@ watch(() => terminalOutput.value, (newLines) => {
         const stationId = parseInt(index)
 
         // Find AP by BSSID
-        const existingAP = accessPoints.value.get(apMac)
+        let foundAP = null
+        accessPoints.value.forEach((ap) => {
+          if (ap.bssid === apMac) {
+            foundAP = ap
+          }
+        })
 
-        if (existingAP) {
-          const stations = existingAP.stations || []
-          const existingStation = stations.find(s => s.mac === staMac)
+        if (foundAP) {
+          // Create a new object with the updated stations
+          const updatedAP = {
+            ...foundAP,
+            stations: [...(foundAP.stations || [])]
+          }
 
-          const updatedStations = existingStation ? 
-            stations.map(s => s.mac === staMac ? 
-              { ...s, lastSeen: new Date(), id: stationId } : s) :
-            [...stations, { id: stationId, mac: staMac, lastSeen: new Date() }]
+          // Update or add the station
+          const existingStationIndex = updatedAP.stations.findIndex(s => s.mac === staMac)
+          if (existingStationIndex >= 0) {
+            updatedAP.stations[existingStationIndex] = {
+              ...updatedAP.stations[existingStationIndex],
+              id: stationId,
+              lastSeen: new Date()
+            }
+          } else {
+            updatedAP.stations.push({
+              id: stationId,
+              mac: staMac,
+              lastSeen: new Date()
+            })
+          }
 
-          const newAccessPoints = new Map(accessPoints.value)
-          newAccessPoints.set(apMac, {
-            ...existingAP,
-            stations: updatedStations.sort((a, b) => a.id - b.id),
-            lastSeen: new Date()
-          })
-          
-          accessPoints.value = newAccessPoints
+          // Sort stations by ID
+          updatedAP.stations.sort((a, b) => a.id - b.id)
+
+          // Update the AP in the map
+          const key = `${updatedAP.channel}-${updatedAP.essid}`
+          updateAccessPoint(updatedAP)
         }
       }
     }
