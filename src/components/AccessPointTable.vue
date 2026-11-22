@@ -1,165 +1,104 @@
 <template>
   <div class="h-full flex flex-col">
     <!-- Header with filters -->
-    <div class="flex flex-col gap-4 mb-4">
+    <div class="flex flex-col gap-3 mb-4">
       <!-- Title and actions -->
       <div class="flex justify-between items-center">
-        <div class="flex items-center space-x-2">
-          <h2 class="text-xl font-bold">Access Points</h2>
-          <span class="text-sm text-gray-600">({{ accessPoints.size }} devices)</span>
+        <div class="flex items-center gap-2">
+          <span class="ap-count">{{ accessPoints.size }}</span>
+          <span class="muted text-xs">{{ accessPoints.size === 1 ? 'device seen' : 'devices seen' }}</span>
+          <span v-if="isScanning" class="pill pill-selected scanning-pill">
+            <span class="scanning-dot" aria-hidden="true"></span> Scanning…
+          </span>
         </div>
-        <div class="flex items-center space-x-2">
-          <button @click="refreshList"
-            class="px-3 py-1 text-sm font-bold bg-blue-500 text-white rounded border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]"
-            :disabled="!isConnected">
+        <div class="flex items-center gap-2">
+          <button @click="refreshList" class="button button-subtle button-small" :disabled="!canSend">
             Refresh
           </button>
-          <button @click="clearTable"
-            class="px-3 py-1 text-sm font-bold bg-orange-500 text-white rounded border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]">
+          <button @click="clearTable" class="button button-subtle button-small">
             Clear
           </button>
         </div>
       </div>
 
       <!-- Filters -->
-      <div class="flex space-x-4">
-        <div class="flex-1">
-          <input type="text" v-model="search" placeholder="Search by ESSID, BSSID, or Station..."
-            class="w-full px-3 py-2 text-sm bg-white rounded border-2 border-black focus:outline-none focus:ring-2 focus:ring-blue-500">
+      <div class="flex flex-wrap gap-2">
+        <div class="flex-1 min-w-[180px]">
+          <input type="text" v-model="search" placeholder="Search by ESSID, BSSID, or station…"
+            class="input-field w-full">
         </div>
-        <div class="flex space-x-2">
-          <button v-for="view in viewOptions" :key="view.id" @click="currentView = view.id"
-            class="px-3 py-2 text-sm font-bold rounded border-2 border-black"
-            :class="currentView === view.id ? 'bg-orange-500 text-white shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]' : 'bg-white shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]'">
+        <div class="view-switch">
+          <button v-for="view in viewOptions" :key="view.id" @click="currentView = view.id" type="button"
+            class="view-switch-btn" :class="{ 'is-active': currentView === view.id }">
             {{ view.label }}
           </button>
         </div>
-        <select v-model="sortBy"
-          class="px-3 py-2 text-sm bg-white rounded border-2 border-black focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <option value="rssi">Sort by Signal</option>
-          <option value="stations">Sort by Stations</option>
-          <option value="essid">Sort by Name</option>
-          <option value="channel">Sort by Channel</option>
+        <select v-model="sortBy" class="input-field">
+          <option value="rssi">Sort by signal</option>
+          <option value="stations">Sort by stations</option>
+          <option value="essid">Sort by name</option>
+          <option value="channel">Sort by channel</option>
         </select>
       </div>
     </div>
 
     <!-- Table -->
-    <div class="flex-1 min-h-0 overflow-auto border-2 border-black rounded bg-white">
-      <!-- Compact View -->
-      <table v-if="currentView === 'compact'" class="w-full text-sm">
-        <thead class="bg-orange-300 sticky top-0 z-10">
+    <div class="flex-1 min-h-0 overflow-auto ap-table-wrap">
+      <table class="w-full text-sm ap-table">
+        <thead class="sticky top-0 z-10">
           <tr>
-            <th class="px-2 py-1 text-left border-b-2 border-black font-bold w-12">#</th>
-            <th class="px-2 py-1 text-left border-b-2 border-black font-bold">ESSID</th>
-            <th class="px-2 py-1 text-left border-b-2 border-black w-16 font-bold">CH</th>
-            <th class="px-2 py-1 text-left border-b-2 border-black w-16 font-bold">RSSI</th>
-            <th class="px-2 py-1 text-left border-b-2 border-black w-16 font-bold">STA</th>
+            <th class="w-10">#</th>
+            <th>ESSID</th>
+            <th class="w-14">CH</th>
+            <th class="w-16">RSSI</th>
+            <th v-if="currentView === 'detailed'" class="w-32">BSSID</th>
+            <th class="w-14">STA</th>
+            <th v-if="currentView === 'detailed'" class="w-20">Seen</th>
           </tr>
         </thead>
         <tbody>
           <template v-for="ap in sortedAPs" :key="ap.bssid">
-            <tr class="hover:bg-orange-50 border-b border-gray-200 cursor-pointer" :class="getSignalClass(ap.rssi)"
-              @click="ap.showStations = !ap.showStations">
-              <td class="px-2 py-1 font-mono">{{ ap.index }}</td>
-              <td class="px-2 py-1">
-                <div class="flex items-center">
+            <tr class="ap-row" :class="getSignalClass(ap.rssi)" @click="ap.showStations = !ap.showStations">
+              <td class="font-mono muted">{{ ap.index }}</td>
+              <td>
+                <div class="flex items-center gap-1.5">
                   <span class="font-medium">{{ ap.essid }}</span>
-                  <span v-if="ap.isSelected" class="ml-1 text-xs bg-green-100 px-1 rounded">
-                    selected
-                  </span>
-                  <span v-if="ap.isHidden" class="ml-1 text-xs bg-gray-200 px-1 rounded">
-                    hidden
-                  </span>
+                  <span v-if="ap.isSelected" class="pill pill-selected">selected</span>
+                  <span v-if="ap.isHidden" class="pill pill-muted">hidden</span>
                 </div>
               </td>
-              <td class="px-2 py-1">{{ ap.channel }}</td>
-              <td class="px-2 py-1">
-                <div class="flex items-center">
-                  <div class="w-2 h-2 rounded-full mr-1" :class="getSignalDotClass(ap.rssi)"></div>
+              <td>{{ ap.channel }}</td>
+              <td>
+                <div class="flex items-center gap-1.5">
+                  <span class="signal-dot" :class="getSignalDotClass(ap.rssi)"></span>
                   {{ ap.rssi || 'N/A' }}
                 </div>
               </td>
-              <td class="px-2 py-1">
-                <span class="text-xs px-1 py-0.5 bg-blue-100 rounded">
-                  {{ ap.stations?.length || 0 }}
-                </span>
+              <td v-if="currentView === 'detailed'" class="font-mono muted">{{ ap.bssid }}</td>
+              <td>
+                <span class="pill">{{ ap.stations?.length || 0 }}</span>
               </td>
+              <td v-if="currentView === 'detailed'" class="muted">{{ formatLastSeen(ap.lastSeen) }}</td>
             </tr>
             <!-- Stations subrow -->
-            <tr v-if="ap.showStations && ap.stations?.length" class="bg-gray-50 text-xs border-b border-gray-200">
-              <td colspan="5" class="px-2 py-1">
-                <div class="pl-4 space-y-1">
-                  <div v-for="station in ap.stations" :key="station.mac" class="flex items-center space-x-2">
-                    <span class="w-8 text-gray-500">#{{ station.id }}</span>
+            <tr v-if="ap.showStations && ap.stations?.length" class="ap-substations-row">
+              <td :colspan="currentView === 'detailed' ? 7 : 5">
+                <div class="pl-5 space-y-1 py-1">
+                  <div v-for="station in ap.stations" :key="station.mac" class="flex items-center gap-2 text-xs">
+                    <span class="w-8 muted">#{{ station.id }}</span>
                     <span class="font-mono">{{ station.mac }}</span>
-                    <span v-if="station.vendor" class="text-gray-600">({{ station.vendor }})</span>
+                    <span v-if="station.vendor" class="muted">({{ station.vendor }})</span>
+                    <span v-if="currentView === 'detailed'" class="muted">Last seen: {{ formatLastSeen(station.lastSeen) }}</span>
                   </div>
                 </div>
               </td>
             </tr>
           </template>
-        </tbody>
-      </table>
-
-      <!-- Detailed View -->
-      <table v-else class="w-full text-sm">
-        <thead class="bg-orange-300 sticky top-0 z-10">
-          <tr>
-            <th class="px-2 py-1 text-left border-b-2 border-black font-bold w-12">#</th>
-            <th class="px-2 py-1 text-left border-b-2 border-black font-bold">ESSID</th>
-            <th class="px-2 py-1 text-left border-b-2 border-black w-16 font-bold">CH</th>
-            <th class="px-2 py-1 text-left border-b-2 border-black w-16 font-bold">RSSI</th>
-            <th class="px-2 py-1 text-left border-b-2 border-black w-32 font-bold">BSSID</th>
-            <th class="px-2 py-1 text-left border-b-2 border-black w-16 font-bold">STA</th>
-            <th class="px-2 py-1 text-left border-b-2 border-black w-24 font-bold">Last Seen</th>
+          <tr v-if="!sortedAPs.length">
+            <td :colspan="currentView === 'detailed' ? 7 : 5" class="ap-empty">
+              {{ isConnected ? 'No access points yet — run Scan all or Sniff beacons.' : 'Connect a device, or explore the demo, to see access points here.' }}
+            </td>
           </tr>
-        </thead>
-        <tbody>
-          <template v-for="ap in sortedAPs" :key="ap.bssid">
-            <tr class="hover:bg-orange-50 border-b border-gray-200 cursor-pointer" :class="getSignalClass(ap.rssi)"
-              @click="ap.showStations = !ap.showStations">
-              <td class="px-2 py-1 font-mono">{{ ap.index }}</td>
-              <td class="px-2 py-1">
-                <div class="flex items-center">
-                  <span class="font-medium">{{ ap.essid }}</span>
-                  <span v-if="ap.isSelected" class="ml-1 text-xs bg-green-100 px-1 rounded">
-                    selected
-                  </span>
-                  <span v-if="ap.isHidden" class="ml-1 text-xs bg-gray-200 px-1 rounded">
-                    hidden
-                  </span>
-                </div>
-              </td>
-              <td class="px-2 py-1">{{ ap.channel }}</td>
-              <td class="px-2 py-1">
-                <div class="flex items-center">
-                  <div class="w-2 h-2 rounded-full mr-1" :class="getSignalDotClass(ap.rssi)"></div>
-                  {{ ap.rssi || 'N/A' }}
-                </div>
-              </td>
-              <td class="px-2 py-1 font-mono">{{ ap.bssid }}</td>
-              <td class="px-2 py-1">
-                <span class="text-xs px-1 py-0.5 bg-blue-100 rounded">
-                  {{ ap.stations?.length || 0 }}
-                </span>
-              </td>
-              <td class="px-2 py-1 text-gray-600">{{ formatLastSeen(ap.lastSeen) }}</td>
-            </tr>
-            <!-- Stations subrow -->
-            <tr v-if="ap.showStations && ap.stations?.length" class="bg-gray-50 text-xs border-b border-gray-200">
-              <td colspan="7" class="px-2 py-1">
-                <div class="pl-4 space-y-1">
-                  <div v-for="station in ap.stations" :key="station.mac" class="flex items-center space-x-2">
-                    <span class="w-8 text-gray-500">#{{ station.id }}</span>
-                    <span class="font-mono">{{ station.mac }}</span>
-                    <span v-if="station.vendor" class="text-gray-600">({{ station.vendor }})</span>
-                    <span class="text-gray-500">Last seen: {{ formatLastSeen(station.lastSeen) }}</span>
-                  </div>
-                </div>
-              </td>
-            </tr>
-          </template>
         </tbody>
       </table>
     </div>
@@ -170,7 +109,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useSerialConnection } from '../utils/serialConnection'
 
-const { sendCommand, isConnected, terminalOutput } = useSerialConnection()
+const { sendCommand, isConnected, isScanning, canSend, terminalOutput } = useSerialConnection()
 const accessPoints = ref(new Map())
 const search = ref('')
 const currentView = ref('compact')
@@ -265,7 +204,7 @@ const clearTable = () => {
 
 
 const refreshList = async () => {
-  if (isConnected.value) {
+  if (canSend.value) {
     await sendCommand('list -a')
   }
 }
@@ -331,7 +270,7 @@ watch(() => terminalOutput.value, (newLines) => {
         const [_, index, channel, essid] = match
         const trimmedEssid = cleanEssid(essid)
 
-        // Create a key that matches the one used in scanap
+        // Create a key that matches the one used by scanall
         const key = `${channel}-${trimmedEssid}`
         const existingAP = accessPoints.value.get(key)
 
@@ -361,7 +300,7 @@ watch(() => terminalOutput.value, (newLines) => {
       }
     }
 
-    // Parse scanap output
+    // Parse scanall output
     else if (plainLine.includes('RSSI:')) {
       const match = plainLine.match(/RSSI:\s(-?\d+)\sCh:\s(\d+)\sBSSID:\s([a-fA-F0-9:]+)\sESSID:\s(.+)/)
       if (match) {

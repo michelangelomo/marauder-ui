@@ -1,4 +1,5 @@
 import { ref, computed } from 'vue'
+import { generateDemoData } from './demoData'
 
 // Create singleton instance
 const port = ref(null)
@@ -6,7 +7,10 @@ const reader = ref(null)
 const isConnected = ref(false)
 const terminalOutput = ref([])
 const isDemoMode = ref(false)
+const isScanning = ref(false)
 let buffer = ''
+let autoRefreshTimer = null
+const AUTO_REFRESH_INTERVAL_MS = 4000
 
 export const useSerialConnection = () => {
   const connect = async () => {
@@ -46,11 +50,40 @@ export const useSerialConnection = () => {
         port.value = null
         reader.value = null
         isConnected.value = false
+        stopAutoRefresh()
         addToTerminal('✗ Disconnected from serial port', 'error')
       } catch (error) {
         console.error('Disconnection error:', error)
         addToTerminal(`✗ Error disconnecting: ${error.message}`, 'error')
       }
+    }
+  }
+
+  // While a scan is running, the AP list keeps changing on the device but the
+  // UI only learns about it from `list -a` output, so poll that periodically
+  // instead of asking the user to hit Refresh after every scan.
+  const startAutoRefresh = () => {
+    if (autoRefreshTimer) return
+    autoRefreshTimer = setInterval(() => {
+      sendCommand('list -a')
+    }, AUTO_REFRESH_INTERVAL_MS)
+  }
+
+  const stopAutoRefresh = () => {
+    if (autoRefreshTimer) {
+      clearInterval(autoRefreshTimer)
+      autoRefreshTimer = null
+    }
+    isScanning.value = false
+  }
+
+  const trackScanState = (command) => {
+    const trimmed = command.trim()
+    if (trimmed === 'scanall' || trimmed.startsWith('scanall ')) {
+      isScanning.value = true
+      startAutoRefresh()
+    } else if (trimmed.startsWith('stopscan')) {
+      stopAutoRefresh()
     }
   }
 
@@ -95,27 +128,28 @@ export const useSerialConnection = () => {
   }
 
   const sendCommand = async (command) => {
-    console.log(isDemoMode.value)
+    trackScanState(command)
+
     if (isDemoMode.value) {
       // Handle demo commands
       addToTerminal(`> ${command}`, 'command')
 
       // Simulate responses based on command
-      switch (command) {
-        case 'scanap':
-          addToTerminal('Starting AP scan. Stop with stopscan')
+      switch (true) {
+        case command === 'scanall':
+          addToTerminal('Starting scan. Stop with stopscan')
           setTimeout(() => {
             generateDemoData().forEach(ap => {
               addToTerminal(`RSSI: ${ap.rssi} Ch: ${ap.channel} BSSID: ${ap.bssid} ESSID: ${ap.essid}`)
             })
           }, 500)
           break
-        case 'list -a':
+        case command === 'list -a':
           generateDemoData().forEach(ap => {
             addToTerminal(`[${ap.index}][CH:${ap.channel}] ${ap.essid}${ap.isSelected ? ' (selected)' : ''}`)
           })
           break
-        case 'stopscan':
+        case command === 'stopscan' || command === 'stopscan -f':
           addToTerminal('Stopping all scans...')
           break
         default:
@@ -143,7 +177,6 @@ export const useSerialConnection = () => {
   }
 
   const addToTerminal = (text, type = 'normal') => {
-    console.log('Adding to terminal:', text, type) // Debug log
     if (text.trim()) {
       const lineClass = getTypeClass(type)
       terminalOutput.value = [...terminalOutput.value, `<span class="${lineClass}">${text}</span>`]
@@ -168,6 +201,8 @@ export const useSerialConnection = () => {
   return {
     isConnected: computed(() => isConnected.value), // Make it computed
     isDemoMode,
+    isScanning: computed(() => isScanning.value),
+    canSend: computed(() => isConnected.value || isDemoMode.value),
     terminalOutput,
     connect,
     disconnect,

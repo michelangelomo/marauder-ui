@@ -59,8 +59,8 @@ export function generateDemoData() {
 export function generateDemoTerminalOutput() {
     return [
         '<span class="text-blue-400">✓ Connected to serial port</span>',
-        '<span class="text-green-400">> scanap</span>',
-        '<span class="text-green-400">Starting AP scan. Stop with stopscan</span>',
+        '<span class="text-green-400">> scanall</span>',
+        '<span class="text-green-400">Starting scan. Stop with stopscan</span>',
         '<span class="text-green-400">Clearing APs...0</span>',
         ...generateDemoData().map(ap =>
             `<span class="text-green-400">RSSI: ${ap.rssi} Ch: ${ap.channel} BSSID: ${ap.bssid} ESSID: ${ap.essid}</span>`
