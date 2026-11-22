@@ -10,7 +10,9 @@ const isDemoMode = ref(false)
 const isScanning = ref(false)
 let buffer = ''
 let autoRefreshTimer = null
-const AUTO_REFRESH_INTERVAL_MS = 4000
+let autoRefreshStopTimer = null
+const AUTO_REFRESH_INTERVAL_MS = 8000
+const AUTO_REFRESH_MAX_DURATION_MS = 60000
 
 export const useSerialConnection = () => {
   const connect = async () => {
@@ -61,18 +63,25 @@ export const useSerialConnection = () => {
 
   // While a scan is running, the AP list keeps changing on the device but the
   // UI only learns about it from `list -a` output, so poll that periodically
-  // instead of asking the user to hit Refresh after every scan.
+  // instead of asking the user to hit Refresh after every scan. Capped at
+  // AUTO_REFRESH_MAX_DURATION_MS so a scan left running doesn't poll forever —
+  // the user can always hit Refresh manually after that.
   const startAutoRefresh = () => {
     if (autoRefreshTimer) return
     autoRefreshTimer = setInterval(() => {
       sendCommand('list -a')
     }, AUTO_REFRESH_INTERVAL_MS)
+    autoRefreshStopTimer = setTimeout(stopAutoRefresh, AUTO_REFRESH_MAX_DURATION_MS)
   }
 
   const stopAutoRefresh = () => {
     if (autoRefreshTimer) {
       clearInterval(autoRefreshTimer)
       autoRefreshTimer = null
+    }
+    if (autoRefreshStopTimer) {
+      clearTimeout(autoRefreshStopTimer)
+      autoRefreshStopTimer = null
     }
     isScanning.value = false
   }
