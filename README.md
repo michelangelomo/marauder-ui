@@ -2,7 +2,8 @@
 
 A responsive Vue 3 interface for connecting to ESP32 Marauder firmware over the Web Serial API.
 
-![Marauder Console screenshot](docs/homepage.jpg)
+<img width="1901" height="863" alt="image" src="https://github.com/user-attachments/assets/50679a03-e4ae-4d78-85f9-76bd55372b5c" />
+
 
 ## Features
 
